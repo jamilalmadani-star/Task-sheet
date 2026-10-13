@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ٹاسک مینجمنٹ پورٹل</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #eef2f5; margin: 0; padding: 20px; direction: rtl; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #bdc3c7; border-radius: 6px; box-sizing: border-box; }
+        button { background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background: #2980b9; }
+        .login-box { max-width: 400px; margin: 100px auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
+        .hidden { display: none !important; }
+        .task-card { background: #f8f9fa; border: 1px solid #e9ecef; border-right: 5px solid #3498db; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; }
+        .bg-pending { background: #f39c12; }
+        .bg-accepted { background: #3498db; }
+        .bg-rejected { background: #e74c3c; }
+        .bg-working { background: #9b59b6; }
+        .bg-completed { background: #2ecc71; }
+        .admin-nav { display: flex; gap: 10px; margin-bottom: 20px; }
+        .admin-nav button { flex: 1; }
+        .admin-card { background: #fff; border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="login-box">
+        <h2>ٹاسک پورٹل میں لاگ ان کریں</h2>
+        <div class="input-group">
+            <input type="text" id="user-code-input" placeholder="اپنا کوڈ درج کریں">
+        </div>
+        <button onclick="login()">لاگ ان</button>
+        <p id="login-error" style="color: red; margin-top: 10px;"></p>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="app-container" class="container hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 id="welcome-msg">خوش آمدید</h3>
+            <button onclick="logout()" style="background: #e74c3c;">لاگ آؤٹ</button>
+        </div>
+
+        <!-- Admin View -->
+        <div id="admin-view" class="hidden">
+            <div id="primary-admin-controls" class="admin-nav hidden">
+                <button onclick="showAdminSection('tasks')">ٹاسک مینجمنٹ</button>
+                <button onclick="showAdminSection('admins')">ایڈمنز مینجمنٹ (3606)</button>
+            </div>
+
+            <!-- Admin Tasks Section -->
+            <div id="admin-tasks-section">
+                <h3>نیا ٹاسک بنائیں</h3>
+                <form id="create-task-form" onsubmit="createTask(event)">
+                    <div class="input-group">
+                        <label>اجیر کوڈ (Worker Code)</label>
+                        <input type="text" id="task-worker-code" required>
+                    </div>
+                    <div class="input-group">
+                        <label>ٹاسک کی تفصیل</label>
+                        <textarea id="task-desc" rows="3" required></textarea>
+                    </div>
+                    <button type="submit">ٹاسک بھیجیں</button>
+                </form>
+
+                <h3 style="margin-top: 30px;">تمام ٹاسکس</h3>
+                <div id="admin-task-list"></div>
+            </div>
+
+            <!-- Manage Admins Section (Only Primary Admin 3606) -->
+            <div id="admin-manage-section" class="hidden">
+                <h3>نیا ایڈمن شامل کریں</h3>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <input type="text" id="new-admin-code" placeholder="نیا ایڈمن کوڈ">
+                    <button onclick="addAdmin()">ایڈمن شامل کریں</button>
+                </div>
+                <h3>موجودہ ایڈمنز</h3>
+                <div id="admins-list"></div>
+            </div>
+        </div>
+
+        <!-- Worker View -->
+        <div id="worker-view" class="hidden">
+            <h3>میرے ٹاسکس</h3>
+            <div id="worker-task-list"></div>
+        </div>
+    </div>
+
+    <!-- Firebase Realtime Database Integration -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, get, child, update, remove, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = {
+            databaseURL: "https://task-management-portal-252e0-default-rtdb.firebaseio.com/"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        let currentUser = null;
+        let isPrimaryAdmin = false;
+        let isAdmin = false;
+
+        window.login = async function() {
+            const code = document.getElementById('user-code-input').value.trim();
+            const errorEl = document.getElementById('login-error');
+            errorEl.innerText = '';
+
+            if (!code) {
+                errorEl.innerText = 'براہ کرم کوڈ درج کریں';
+                return;
+            }
+
+            // Check Primary Admin
+            if (code === '3606') {
+                currentUser = '3606';
+                isPrimaryAdmin = true;
+                isAdmin = true;
+                loadAdminDashboard();
+                return;
+            }
+
+            // Check Secondary Admins from Firebase
+            const adminsSnap = await get(child(ref(db), 'admins/' + code));
+            if (adminsSnap.exists()) {
+                currentUser = code;
+                isPrimaryAdmin = false;
+                isAdmin = true;
+                loadAdminDashboard();
+                return;
+            }
+
+            // Default treat as Worker
+            currentUser = code;
+            isPrimaryAdmin = false;
+            isAdmin = false;
+            loadWorkerDashboard();
+        };
+
+        window.logout = function() {
+            currentUser = null;
+            document.getElementById('login-screen').classList.remove('hidden');
+            document.getElementById('app-container').classList.add('hidden');
+            document.getElementById('user-code-input').value = '';
+        };
+
+        function loadAdminDashboard() {
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            document.getElementById('admin-view').classList.remove('hidden');
+            document.getElementById('worker-view').classList.add('hidden');
+
+            document.getElementById('welcome-msg').innerText = `ایڈمن پورٹل (${currentUser})`;
+
+            if (isPrimaryAdmin) {
+                document.getElementById('primary-admin-controls').classList.remove('hidden');
+            } else {
+                document.getElementById('primary-admin-controls').classList.add('hidden');
+            }
+
+            showAdminSection('tasks');
+            listenToAllTasks();
+            if (isPrimaryAdmin) listenToAdmins();
+        }
+
+        function loadWorkerDashboard() {
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            document.getElementById('admin-view').classList.add('hidden');
+            document.getElementById('worker-view').classList.remove('hidden');
+
+            document.getElementById('welcome-msg').innerText = `اجیر پورٹل (${currentUser})`;
+            listenToWorkerTasks();
+        }
+
+        window.showAdminSection = function(section) {
+            if (section === 'tasks') {
+                document.getElementById('admin-tasks-section').classList.remove('hidden');
+                document.getElementById('admin-manage-section').classList.add('hidden');
+            } else {
+                document.getElementById('admin-tasks-section').classList.add('hidden');
+                document.getElementById('admin-manage-section').classList.remove('hidden');
+            }
+        };
+
+        window.createTask = async function(e) {
+            e.preventDefault();
+            const workerCode = document.getElementById('task-worker-code').value.trim();
+            const desc = document.getElementById('task-desc').value.trim();
+            const taskId = 'task_' + Date.now();
+
+            await set(ref(db, 'tasks/' + taskId), {
+                id: taskId,
+                workerCode: workerCode,
+                description: desc,
+                status: 'PENDING',
+                createdAt: new Date().toLocaleString('ur-PK')
+            });
+
+            document.getElementById('create-task-form').reset();
+            alert('ٹاسک کامیابی سے بھیج دیا گیا');
+        };
+
+        function listenToAllTasks() {
+            onValue(ref(db, 'tasks'), (snapshot) => {
+                const list = document.getElementById('admin-task-list');
+                list.innerHTML = '';
+                if (!snapshot.exists()) {
+                    list.innerHTML = '<p>کوئی ٹاسک موجود نہیں ہے</p>';
+                    return;
+                }
+                snapshot.forEach((childSnap) => {
+                    const task = childSnap.val();
+                    list.innerHTML += `
+                        <div class="task-card">
+                            <div><strong>اجیر کوڈ:</strong> ${task.workerCode}</div>
+                            <div><strong>تفصیل:</strong> ${task.description}</div>
+                            <div><strong>حالت:</strong> <span class="badge bg-${task.status.toLowerCase()}">${task.status}</span></div>
+                            <div style="margin-top: 10px;">
+                                <button onclick="deleteTask('${task.id}')" style="background:#e74c3c; padding: 5px 10px;">ڈلیٹ کریں</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            });
+        }
+
+        function listenToWorkerTasks() {
+            onValue(ref(db, 'tasks'), (snapshot) => {
+                const list = document.getElementById('worker-task-list');
+                list.innerHTML = '';
+                let count = 0;
+                snapshot.forEach((childSnap) => {
+                    const task = childSnap.val();
+                    if (task.workerCode === currentUser) {
+                        count++;
+                        list.innerHTML += `
+                            <div class="task-card">
+                                <div><strong>تفصیل:</strong> ${task.description}</div>
+                                <div><strong>حالت:</strong> <span class="badge bg-${task.status.toLowerCase()}">${task.status}</span></div>
+                                <div style="margin-top: 10px; display: flex; gap: 5px;">
+                                    <button onclick="updateStatus('${task.id}', 'ACCEPTED')">قبول کریں</button>
+                                    <button onclick="updateStatus('${task.id}', 'REJECTED')" style="background:#e74c3c;">مسترد کریں</button>
+                                    <button onclick="updateStatus('${task.id}', 'WORKING')" style="background:#9b59b6;">کام جاری ہے</button>
+                                    <button onclick="updateStatus('${task.id}', 'COMPLETED')" style="background:#2ecc71;">مکمل ہو گیا</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+                if (count === 0) {
+                    list.innerHTML = '<p>آپ کے لیے کوئی ٹاسک نہیں ہے</p>';
+                }
+            });
+        }
+
+        window.updateStatus = async function(taskId, newStatus) {
+            await update(ref(db, 'tasks/' + taskId), { status: newStatus });
+        };
+
+        window.deleteTask = async function(taskId) {
+            if (confirm('کیا آپ اس ٹاسک کو ختم کرنا چاہتے ہیں؟')) {
+                await remove(ref(db, 'tasks/' + taskId));
+            }
+        };
+
+        window.addAdmin = async function() {
+            const code = document.getElementById('new-admin-code').value.trim();
+            if (!code) return;
+            await set(ref(db, 'admins/' + code), { addedBy: '3606' });
+            document.getElementById('new-admin-code').value = '';
+            alert('نیا ایڈمن شامل کر دیا گیا');
+        };
+
+        function listenToAdmins() {
+            onValue(ref(db, 'admins'), (snapshot) => {
+                const list = document.getElementById('admins-list');
+                list.innerHTML = '';
+                snapshot.forEach((childSnap) => {
+                    const code = childSnap.key;
+                    list.innerHTML += `
+                        <div class="admin-card">
+                            <span>ایڈمن کوڈ: <strong>${code}</strong></span>
+                            <button onclick="removeAdmin('${code}')" style="background:#e74c3c; padding: 5px 10px;">ختم کریں</button>
+                        </div>
+                    `;
+                });
+            });
+        }
+
+        window.removeAdmin = async function(code) {
+            if (confirm(`کیا آپ ایڈمن ${code} کو ہٹانا چاہتے ہیں؟`)) {
+                await remove(ref(db, 'admins/' + code));
+            }
+        };
+    </script>
+</body>
+</html>
